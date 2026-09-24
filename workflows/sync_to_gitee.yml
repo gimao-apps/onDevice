@@ -1,50 +1,39 @@
-name: Sync Release to Gitee
+name: Sync All Release Assets to Gitee
 
 on:
   release:
-    types: [published] # 当在 GitHub 发布新 Release 时触发
+    types: [published] # 触发条件：当你在 GitHub 成功点击 "Publish release" 时
 
 jobs:
-  sync:
+  sync-to-gitee:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      # 1. 检出 GitHub 仓库代码
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. 下载 GitHub 当前 Release 的附件（例如您的 APK）
-      - name: Download GitHub Release Assets
+      # 2. 自动把 GitHub Release 的所有文件下载到工作区
+      - name: Download All GitHub Release Assets
         uses: robinraju/release-downloader@v1
         with:
           repository: ${{ github.repository }}
           tag: ${{ github.event.release.tag_name }}
-          fileName: "*" # 下载所有附件
-          out-file-path: "./downloads"
+          fileName: "*" # 代表匹配并下载所有附加的文件（APK/ZIP等）
+          out-file-path: "./release-assets"
 
-      # 2. 将 Release 同步到 Gitee
-      - name: Create Gitee Release
-        run: |
-          # 获取 GitHub 的 Release 信息
-          TAG_NAME="${{ github.event.release.tag_name }}"
-          RELEASE_TITLE="${{ github.event.release.name }}"
-          RELEASE_BODY="${{ github.event.release.body }}"
+      # 3. 使用专门的 Gitee Release Action 将所有内容与文件推送到 Gitee
+      - name: Create Gitee Release and Upload Assets
+        uses: niannian01/action-gitee-release@v1.0.1
+        with:
+          gitee-token: ${{ secrets.GITEE_TOKEN }}
+          # 注意：请务必将下面两行修改为你自己在 Gitee 上的真实用户名和仓库名
+          gitee-username: "gimao-apps"
+          gitee-repo: "onDevice"
           
-          # Gitee 用户名和仓库名（请根据实际情况修改）
-          GITEE_OWNER="您的Gitee用户名"
-          GITEE_REPO="您的Gitee仓库名"
+          # 自动同步 GitHub 的 Tag、标题、日志内容
+          tag: ${{ github.event.release.tag_name }}
+          name: ${{ github.event.release.name }}
+          body: ${{ github.event.release.body }}
           
-          echo "正在向 Gitee 创建 Release: $TAG_NAME"
-          
-          # 通过 Gitee API 创建 Release
-          # 注意：Gitee API 创建 Release 的同时可以直接上传附件
-          # 这里使用 curl 循环上传下载好的文件
-          for file in ./downloads/*; do
-            if [ -f "$file" ]; then
-              echo "正在上传 $file 到 Gitee..."
-              curl -X POST "https://gitee.com{GITEE_OWNER}/${GITEE_REPO}/releases" \
-                -F "access_token=${{ secrets.GITEE_TOKEN }}" \
-                -F "tag_name=${TAG_NAME}" \
-                -F "name=${RELEASE_TITLE}" \
-                -F "body=${RELEASE_BODY}" \
-                -F "file=@${file}"
-            fi
-          done
+          # 将刚才下载的文件夹内的所有附件，同步上传到 Gitee 对应的发行版列表中
+          files: "./release-assets/*"
