@@ -11,8 +11,8 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     env:
-      GITEE_USER: ${{ secrets.GITEE_USER }}
-      GITEE_REPO: ${{ secrets.GITEE_REPO }} # 格式 owner/repo
+      GITEE_USER: "gimao-apps"
+      GITEE_REPO: "gimao-apps/onDevice" # 格式 owner/repo
       GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
     steps:
       - name: Checkout
