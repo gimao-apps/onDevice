@@ -1,39 +1,74 @@
-name: Sync All Release Assets to Gitee
+name: Sync release to Gitee
 
 on:
   release:
-    types: [published] # 触发条件：当你在 GitHub 成功点击 "Publish release" 时
+    types: [published]
+
+permissions:
+  contents: read
 
 jobs:
-  sync-to-gitee:
+  sync:
     runs-on: ubuntu-latest
+    env:
+      GITEE_USER: ${{ secrets.GITEE_USER }}
+      GITEE_REPO: ${{ secrets.GITEE_REPO }} # 格式 owner/repo
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
     steps:
-      # 1. 检出 GitHub 仓库代码
-      - name: Checkout Code
+      - name: Checkout
         uses: actions/checkout@v4
-
-      # 2. 自动把 GitHub Release 的所有文件下载到工作区
-      - name: Download All GitHub Release Assets
-        uses: robinraju/release-downloader@v1
         with:
-          repository: ${{ github.repository }}
-          tag: ${{ github.event.release.tag_name }}
-          fileName: "*" # 代表匹配并下载所有附加的文件（APK/ZIP等）
-          out-file-path: "./release-assets"
+          fetch-depth: 0
 
-      # 3. 使用专门的 Gitee Release Action 将所有内容与文件推送到 Gitee
-      - name: Create Gitee Release and Upload Assets
-        uses: niannian01/action-gitee-release@v1.0.1
-        with:
-          gitee-token: ${{ secrets.GITEE_TOKEN }}
-          # 注意：请务必将下面两行修改为你自己在 Gitee 上的真实用户名和仓库名
-          gitee-username: "gimao-apps"
-          gitee-repo: "onDevice"
-          
-          # 自动同步 GitHub 的 Tag、标题、日志内容
-          tag: ${{ github.event.release.tag_name }}
-          name: ${{ github.event.release.name }}
-          body: ${{ github.event.release.body }}
-          
-          # 将刚才下载的文件夹内的所有附件，同步上传到 Gitee 对应的发行版列表中
-          files: "./release-assets/*"
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "actions@github.com"
+
+      - name: Add Gitee remote (HTTPS)
+        run: |
+          # remote url: https://{user}:{token}@gitee.com/{owner}/{repo}.git
+          GITEE_REMOTE="https://$GITEE_USER:$GITEE_TOKEN@gitee.com/${GITEE_REPO}.git"
+          git remote add gitee "$GITEE_REMOTE"
+          # push current branch and all tags
+          git push gitee --all
+          git push gitee --tags
+
+      - name: Create Release on Gitee
+        id: create_release
+        run: |
+          TAG_NAME="${GITHUB_REF##*/}"   # release tag
+          TITLE="${{ github.event.release.name }}"
+          BODY="${{ github.event.release.body || '' }}"
+          TARGET_COMMITISH="${{ github.event.release.target_commitish || github.sha }}"
+
+          API="https://gitee.com/api/v5/repos/${GITEE_REPO}/releases?access_token=${GITEE_TOKEN}"
+          RESP=$(jq -n --arg tag "$TAG_NAME" --arg name "$TITLE" --arg body "$BODY" \
+            --arg target "$TARGET_COMMITISH" \
+            '{tag_name: $tag, name: $name, description: $body, target_commitish: $target}')
+          echo "payload=$RESP"
+
+          RESULT=$(curl -s -X POST -H "Content-Type: application/json" -d "$RESP" "$API")
+          echo "result: $RESULT"
+          RELEASE_ID=$(echo "$RESULT" | jq -r '.id // empty')
+          if [ -z "$RELEASE_ID" ]; then
+            echo "Failed to create Gitee release: $RESULT"
+            exit 1
+          fi
+          echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
+
+      - name: Upload assets to Gitee release (optional)
+        if: always() && steps.create_release.outputs.release_id != ''
+        run: |
+          RELEASE_ID=${{ steps.create_release.outputs.release_id }}
+          API="https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/assets?access_token=${GITEE_TOKEN}"
+
+          # 假设构建产物放在 ./dist，上传所有文件
+          if [ -d dist ]; then
+            for f in dist/*; do
+              echo "Uploading $f ..."
+              curl -s -X POST -F "file=@${f}" "${API}" || { echo "upload failed for $f"; exit 1; }
+            done
+          else
+            echo "No dist directory, skipping asset upload"
+          fi
